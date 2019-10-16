@@ -4,7 +4,8 @@ use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{
-    parse_macro_input, Attribute, Data, DeriveInput, Fields, Ident, Lit, LitStr, MetaNameValue,
+    parse_macro_input, Attribute, Data, DeriveInput, Fields, Ident, Index, Lit, LitStr, Member,
+    MetaNameValue,
 };
 
 #[proc_macro_derive(IntoJava, attributes(jnix))]
@@ -84,8 +85,46 @@ fn extract_struct_fields(data: Data) -> Fields {
 fn generate_parameters(
     fields: Fields,
 ) -> (Vec<TokenStream2>, Vec<TokenStream2>, Vec<TokenStream2>) {
-    match fields {
-        Fields::Unit => (vec![], vec![], vec![]),
-        _ => panic!("Derive(IntoJava) only supported on unit structs"),
+    let named_fields = match fields {
+        Fields::Unit => vec![],
+        Fields::Unnamed(fields) => fields
+            .unnamed
+            .into_iter()
+            .zip(0..)
+            .map(|(field, counter)| {
+                let index = Index {
+                    index: counter,
+                    span: Span::call_site(),
+                };
+                let name = Member::Unnamed(index);
+                let binding = Ident::new(&format!("_{}", counter), Span::call_site());
+
+                (name, binding, field)
+            })
+            .collect(),
+        Fields::Named(fields) => fields
+            .named
+            .into_iter()
+            .map(|field| {
+                let binding = field.ident.clone().expect("Named field with no name");
+                let name = Member::Named(binding.clone());
+
+                (name, binding, field)
+            })
+            .collect(),
+    };
+
+    let mut declarations = Vec::with_capacity(named_fields.len());
+    let mut signatures = Vec::with_capacity(named_fields.len());
+    let mut parameters = Vec::with_capacity(named_fields.len());
+
+    for (name, binding, field) in named_fields {
+        let field_type = field.ty;
+
+        declarations.push(quote! { let #binding = self.#name.into_java(env); });
+        signatures.push(quote! { #field_type::JNI_SIGNATURE });
+        parameters.push(quote! { #binding });
     }
+
+    (declarations, signatures, parameters)
 }
