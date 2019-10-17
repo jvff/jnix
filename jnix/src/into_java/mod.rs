@@ -1,3 +1,5 @@
+mod implementations;
+
 use jni::JNIEnv;
 
 pub trait IntoJava<'borrow, 'env: 'borrow> {
