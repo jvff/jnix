@@ -21,6 +21,8 @@ pub fn derive_into_java(input: TokenStream) -> TokenStream {
 
     let tokens = quote! {
         impl<'borrow, 'env: 'borrow> jnix::IntoJava<'borrow, 'env> for #type_name {
+            const JNI_SIGNATURE: &'static str = concat!("L", #jni_class_name_literal, ";");
+
             type JavaType = jni::objects::JObject<'env>;
 
             fn into_java(self, env: &'borrow jni::JNIEnv<'env>) -> Self::JavaType {
