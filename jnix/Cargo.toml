@@ -4,7 +4,9 @@ version = "0.1.0"
 authors = ["Mullvad VPN <admin@mullvad.net>"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+derive = ["jnix-macros"]
 
 [dependencies]
 jni = "0.13"
+jnix-macros = { version = "0.1", optional = true, path = "../jnix-macros" }
