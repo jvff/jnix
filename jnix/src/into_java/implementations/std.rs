@@ -1,7 +1,7 @@
 use crate::IntoJava;
 use jni::{
     objects::{AutoLocal, JObject},
-    sys::{jboolean, JNI_FALSE, JNI_TRUE},
+    sys::{jboolean, jdouble, JNI_FALSE, JNI_TRUE},
     JNIEnv,
 };
 
@@ -16,6 +16,16 @@ impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for bool {
         } else {
             JNI_FALSE
         }
+    }
+}
+
+impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for f64 {
+    const JNI_SIGNATURE: &'static str = "D";
+
+    type JavaType = jdouble;
+
+    fn into_java(self, _: &'borrow JNIEnv<'env>) -> Self::JavaType {
+        self as jdouble
     }
 }
 
