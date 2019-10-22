@@ -2,7 +2,7 @@ use crate::{AsJValue, IntoJava};
 use jni::{
     objects::{AutoLocal, JList, JObject, JValue},
     signature::JavaType,
-    sys::{jboolean, jdouble, jint, JNI_FALSE, JNI_TRUE},
+    sys::{jboolean, jdouble, jint, jsize, JNI_FALSE, JNI_TRUE},
     JNIEnv,
 };
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -38,6 +38,26 @@ impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for f64 {
 
     fn into_java(self, _: &'borrow JNIEnv<'env>) -> Self::JavaType {
         self as jdouble
+    }
+}
+
+impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for &'_ [u8] {
+    const JNI_SIGNATURE: &'static str = "[B";
+
+    type JavaType = AutoLocal<'env, 'borrow>;
+
+    fn into_java(self, env: &'borrow JNIEnv<'env>) -> Self::JavaType {
+        let size = self.len();
+        let array = env
+            .new_byte_array(size as jsize)
+            .expect("Failed to create a Java array of bytes");
+
+        let data = unsafe { std::slice::from_raw_parts(self.as_ptr() as *const i8, size) };
+
+        env.set_byte_array_region(array, 0, data)
+            .expect("Failed to copy bytes to Java array");
+
+        env.auto_local(JObject::from(array))
     }
 }
 
