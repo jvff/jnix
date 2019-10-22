@@ -4,8 +4,8 @@ use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{
-    parse_macro_input, parse_str, Attribute, Data, DeriveInput, ExprClosure, Fields, Ident, Index,
-    Lit, LitStr, Member, MetaNameValue,
+    parse_macro_input, parse_str, Attribute, Data, DeriveInput, ExprClosure, Field, Fields, Ident,
+    Index, Lit, LitStr, Member, MetaNameValue, Pat, PatType, Token, Type,
 };
 
 #[proc_macro_derive(IntoJava, attributes(jnix))]
@@ -127,7 +127,7 @@ fn generate_parameters(
         let converted_binding = Ident::new(&format!("_converted_{}", binding), Span::call_site());
         let final_binding = Ident::new(&format!("_final_{}", binding), Span::call_site());
 
-        let conversion = generate_conversion(source_binding.clone(), &field.attrs);
+        let conversion = generate_conversion(source_binding.clone(), &field);
 
         declarations.push(quote! {
             let #source_binding = self.#name;
@@ -142,9 +142,9 @@ fn generate_parameters(
     (declarations, signatures, parameters)
 }
 
-fn generate_conversion(source: Ident, attributes: &Vec<Attribute>) -> TokenStream2 {
+fn generate_conversion(source: Ident, field: &Field) -> TokenStream2 {
     let map_ident = Ident::new("map", Span::call_site());
-    let conversion = extract_jnix_attributes(attributes)
+    let conversion = extract_jnix_attributes(&field.attrs)
         .find(|attribute| attribute.path.is_ident(&map_ident))
         .map(|attribute| {
             if let Lit::Str(closure) = attribute.lit {
@@ -155,9 +155,41 @@ fn generate_conversion(source: Ident, attributes: &Vec<Attribute>) -> TokenStrea
             }
         });
 
-    if let Some(closure) = conversion {
+    if let Some(mut closure) = conversion {
+        prepare_map_closure(&mut closure, &field);
+
         quote! { (#closure)(#source) }
     } else {
         quote! { #source }
+    }
+}
+
+fn prepare_map_closure(closure: &mut ExprClosure, field: &Field) {
+    assert!(
+        closure.inputs.len() == 1,
+        "Too many parameters in jnix(map = ...) closure"
+    );
+
+    let input = closure
+        .inputs
+        .pop()
+        .expect("Missing parameter in jnix(map = ...) closure")
+        .into_value();
+
+    closure
+        .inputs
+        .push_value(add_type_to_parameter(input, &field.ty));
+}
+
+fn add_type_to_parameter(parameter: Pat, ty: &Type) -> Pat {
+    if let &Pat::Type(_) = &parameter {
+        parameter
+    } else {
+        Pat::Type(PatType {
+            attrs: vec![],
+            pat: Box::new(parameter),
+            colon_token: Token![:](Span::call_site()),
+            ty: Box::new(ty.clone()),
+        })
     }
 }
