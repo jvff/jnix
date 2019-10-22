@@ -18,7 +18,7 @@ pub fn derive_into_java(input: TokenStream) -> TokenStream {
     let jni_class_name_literal = LitStr::new(&jni_class_name, Span::call_site());
 
     let fields = extract_struct_fields(parsed_input.data);
-    let (parameter_conversion, parameter_signatures, parameters) = generate_parameters(fields);
+    let (parameter_declarations, parameter_signatures, parameters) = generate_parameters(fields);
 
     let tokens = quote! {
         impl<'borrow, 'env: 'borrow> jnix::IntoJava<'borrow, 'env> for #type_name {
@@ -27,6 +27,8 @@ pub fn derive_into_java(input: TokenStream) -> TokenStream {
             type JavaType = jnix::jni::objects::JObject<'env>;
 
             fn into_java(self, env: &'borrow jnix::jni::JNIEnv<'env>) -> Self::JavaType {
+                #( #parameter_declarations )*
+
                 let mut constructor_signature = String::with_capacity(
                     1 + #( #parameter_signatures.as_bytes().len() + )* 2
                 );
@@ -34,8 +36,6 @@ pub fn derive_into_java(input: TokenStream) -> TokenStream {
                 constructor_signature.push_str("(");
                 #( constructor_signature.push_str(#parameter_signatures); )*
                 constructor_signature.push_str(")V");
-
-                #( #parameter_conversion )*
 
                 let parameters = [ #( jnix::AsJValue::as_jvalue(&#parameters) ),* ];
 
