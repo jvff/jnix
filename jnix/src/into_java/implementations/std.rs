@@ -1,6 +1,6 @@
 use crate::IntoJava;
 use jni::{
-    objects::AutoLocal,
+    objects::{AutoLocal, JObject},
     sys::{jboolean, JNI_FALSE, JNI_TRUE},
     JNIEnv,
 };
@@ -15,6 +15,23 @@ impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for bool {
             JNI_TRUE
         } else {
             JNI_FALSE
+        }
+    }
+}
+
+impl<'borrow, 'env, T> IntoJava<'borrow, 'env> for Option<T>
+where
+    'env: 'borrow,
+    T: IntoJava<'borrow, 'env, JavaType = AutoLocal<'env, 'borrow>>,
+{
+    const JNI_SIGNATURE: &'static str = T::JNI_SIGNATURE;
+
+    type JavaType = AutoLocal<'env, 'borrow>;
+
+    fn into_java(self, env: &'borrow JNIEnv<'env>) -> Self::JavaType {
+        match self {
+            Some(t) => t.into_java(env),
+            None => env.auto_local(JObject::null()),
         }
     }
 }
