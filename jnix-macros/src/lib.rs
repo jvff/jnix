@@ -4,8 +4,8 @@ use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{
-    parse_macro_input, Attribute, Data, DeriveInput, Fields, Ident, Index, Lit, LitStr, Member,
-    MetaNameValue,
+    parse_macro_input, parse_str, Attribute, Data, DeriveInput, ExprClosure, Fields, Ident, Index,
+    Lit, LitStr, Member, MetaNameValue,
 };
 
 #[proc_macro_derive(IntoJava, attributes(jnix))]
@@ -99,7 +99,7 @@ fn generate_parameters(
                     span: Span::call_site(),
                 };
                 let name = Member::Unnamed(index);
-                let binding = Ident::new(&format!("_{}", counter), Span::call_site());
+                let binding = format!("_{}", counter);
 
                 (name, binding, field)
             })
@@ -108,8 +108,9 @@ fn generate_parameters(
             .named
             .into_iter()
             .map(|field| {
-                let binding = field.ident.clone().expect("Named field with no name");
-                let name = Member::Named(binding.clone());
+                let ident = field.ident.clone().expect("Named field with no name");
+                let binding = ident.to_string();
+                let name = Member::Named(ident);
 
                 (name, binding, field)
             })
@@ -121,12 +122,42 @@ fn generate_parameters(
     let mut parameters = Vec::with_capacity(named_fields.len());
 
     for (name, binding, field) in named_fields {
-        let field_type = field.ty;
+        let source_binding = Ident::new(&format!("_source_{}", binding), Span::call_site());
+        let signature_binding = Ident::new(&format!("_signature_{}", binding), Span::call_site());
+        let converted_binding = Ident::new(&format!("_converted_{}", binding), Span::call_site());
+        let final_binding = Ident::new(&format!("_final_{}", binding), Span::call_site());
 
-        declarations.push(quote! { let #binding = self.#name.into_java(env); });
-        signatures.push(quote! { <#field_type as jnix::IntoJava>::JNI_SIGNATURE });
-        parameters.push(quote! { #binding });
+        let conversion = generate_conversion(source_binding.clone(), &field.attrs);
+
+        declarations.push(quote! {
+            let #source_binding = self.#name;
+            let #converted_binding = #conversion;
+            let #signature_binding = #converted_binding.jni_signature();
+            let #final_binding = #converted_binding.into_java(env);
+        });
+        signatures.push(quote! { #signature_binding });
+        parameters.push(quote! { #final_binding });
     }
 
     (declarations, signatures, parameters)
+}
+
+fn generate_conversion(source: Ident, attributes: &Vec<Attribute>) -> TokenStream2 {
+    let map_ident = Ident::new("map", Span::call_site());
+    let conversion = extract_jnix_attributes(attributes)
+        .find(|attribute| attribute.path.is_ident(&map_ident))
+        .map(|attribute| {
+            if let Lit::Str(closure) = attribute.lit {
+                parse_str::<ExprClosure>(&closure.value())
+                    .expect("Invalid closure syntax in jnix(map = ...) attribute")
+            } else {
+                panic!("Invalid jnix(map = ...) attribute");
+            }
+        });
+
+    if let Some(closure) = conversion {
+        quote! { (#closure)(#source) }
+    } else {
+        quote! { #source }
+    }
 }
