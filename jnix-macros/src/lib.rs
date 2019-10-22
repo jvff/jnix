@@ -4,8 +4,8 @@ use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{
-    parse_macro_input, parse_str, Attribute, Data, DeriveInput, ExprClosure, Field, Fields, Ident,
-    Index, Lit, LitStr, Member, MetaNameValue, Pat, PatType, Token, Type,
+    parse::Parse, parse_macro_input, parse_str, Attribute, Data, DeriveInput, ExprClosure, Field,
+    Fields, Ident, Index, Lit, LitStr, Member, MetaNameValue, Pat, PatType, Path, Token, Type,
 };
 
 #[proc_macro_derive(IntoJava, attributes(jnix))]
@@ -18,7 +18,8 @@ pub fn derive_into_java(input: TokenStream) -> TokenStream {
     let jni_class_name_literal = LitStr::new(&jni_class_name, Span::call_site());
 
     let fields = extract_struct_fields(parsed_input.data);
-    let (parameter_declarations, parameter_signatures, parameters) = generate_parameters(fields);
+    let (parameter_declarations, parameter_signatures, parameters) =
+        generate_parameters(&parsed_input.attrs, fields);
 
     let tokens = quote! {
         impl<'borrow, 'env: 'borrow> jnix::IntoJava<'borrow, 'env> for #type_name {
@@ -54,21 +55,22 @@ pub fn derive_into_java(input: TokenStream) -> TokenStream {
     TokenStream::from(tokens)
 }
 
-fn extract_jnix_attributes(
-    attributes: &Vec<Attribute>,
-) -> impl Iterator<Item = MetaNameValue> + '_ {
+fn extract_jnix_attributes<T>(attributes: &Vec<Attribute>) -> impl Iterator<Item = T> + '_
+where
+    T: Parse,
+{
     let jnix_ident = Ident::new("jnix", Span::call_site());
 
     attributes
         .iter()
         .filter(move |attribute| attribute.path.is_ident(&jnix_ident))
-        .map(|attribute| attribute.parse_args().expect("Invalid jnix attribute"))
+        .filter_map(|attribute| attribute.parse_args().ok())
 }
 
 fn parse_java_class_name(attributes: &Vec<Attribute>) -> Option<String> {
     let class_name_ident = Ident::new("class_name", Span::call_site());
     let attribute = extract_jnix_attributes(attributes)
-        .find(|attribute| attribute.path.is_ident(&class_name_ident))?;
+        .find(|attribute: &MetaNameValue| attribute.path.is_ident(&class_name_ident))?;
 
     if let Lit::Str(class_name) = attribute.lit {
         Some(class_name.value())
@@ -85,9 +87,46 @@ fn extract_struct_fields(data: Data) -> Fields {
 }
 
 fn generate_parameters(
+    attributes: &Vec<Attribute>,
     fields: Fields,
 ) -> (Vec<TokenStream2>, Vec<TokenStream2>, Vec<TokenStream2>) {
-    let named_fields = match fields {
+    let named_fields = parse_fields(attributes, fields);
+
+    let mut declarations = Vec::with_capacity(named_fields.len());
+    let mut signatures = Vec::with_capacity(named_fields.len());
+    let mut parameters = Vec::with_capacity(named_fields.len());
+
+    for (name, binding, field) in named_fields {
+        let source_binding = Ident::new(&format!("_source_{}", binding), Span::call_site());
+        let signature_binding = Ident::new(&format!("_signature_{}", binding), Span::call_site());
+        let converted_binding = Ident::new(&format!("_converted_{}", binding), Span::call_site());
+        let final_binding = Ident::new(&format!("_final_{}", binding), Span::call_site());
+
+        let conversion = generate_conversion(source_binding.clone(), &field);
+
+        declarations.push(quote! {
+            let #source_binding = self.#name;
+            let #converted_binding = #conversion;
+            let #signature_binding = #converted_binding.jni_signature();
+            let #final_binding = #converted_binding.into_java(env);
+        });
+        signatures.push(quote! { #signature_binding });
+        parameters.push(quote! { #final_binding });
+    }
+
+    (declarations, signatures, parameters)
+}
+
+fn parse_fields(attributes: &Vec<Attribute>, fields: Fields) -> Vec<(Member, String, Field)> {
+    let skip_all_ident = Ident::new("skip_all", Span::call_site());
+    let should_skip_all = extract_jnix_attributes(attributes)
+        .any(|attribute: Path| attribute.is_ident(&skip_all_ident));
+
+    if should_skip_all {
+        return vec![];
+    }
+
+    match fields {
         Fields::Unit => vec![],
         Fields::Unnamed(fields) => fields
             .unnamed
@@ -115,37 +154,13 @@ fn generate_parameters(
                 (name, binding, field)
             })
             .collect(),
-    };
-
-    let mut declarations = Vec::with_capacity(named_fields.len());
-    let mut signatures = Vec::with_capacity(named_fields.len());
-    let mut parameters = Vec::with_capacity(named_fields.len());
-
-    for (name, binding, field) in named_fields {
-        let source_binding = Ident::new(&format!("_source_{}", binding), Span::call_site());
-        let signature_binding = Ident::new(&format!("_signature_{}", binding), Span::call_site());
-        let converted_binding = Ident::new(&format!("_converted_{}", binding), Span::call_site());
-        let final_binding = Ident::new(&format!("_final_{}", binding), Span::call_site());
-
-        let conversion = generate_conversion(source_binding.clone(), &field);
-
-        declarations.push(quote! {
-            let #source_binding = self.#name;
-            let #converted_binding = #conversion;
-            let #signature_binding = #converted_binding.jni_signature();
-            let #final_binding = #converted_binding.into_java(env);
-        });
-        signatures.push(quote! { #signature_binding });
-        parameters.push(quote! { #final_binding });
     }
-
-    (declarations, signatures, parameters)
 }
 
 fn generate_conversion(source: Ident, field: &Field) -> TokenStream2 {
     let map_ident = Ident::new("map", Span::call_site());
     let conversion = extract_jnix_attributes(&field.attrs)
-        .find(|attribute| attribute.path.is_ident(&map_ident))
+        .find(|attribute: &MetaNameValue| attribute.path.is_ident(&map_ident))
         .map(|attribute| {
             if let Lit::Str(closure) = attribute.lit {
                 parse_str::<ExprClosure>(&closure.value())
