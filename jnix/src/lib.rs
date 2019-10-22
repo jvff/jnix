@@ -1,3 +1,5 @@
+pub extern crate jni;
+
 mod as_jvalue;
 mod into_java;
 
