@@ -122,7 +122,7 @@ fn generate_parameters(
         let field_type = field.ty;
 
         declarations.push(quote! { let #binding = self.#name.into_java(env); });
-        signatures.push(quote! { #field_type::JNI_SIGNATURE });
+        signatures.push(quote! { <#field_type as jnix::IntoJava>::JNI_SIGNATURE });
         parameters.push(quote! { #binding });
     }
 
