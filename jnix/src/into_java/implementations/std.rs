@@ -61,6 +61,34 @@ impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for &'_ [u8] {
     }
 }
 
+macro_rules! impl_into_java_for_array {
+    ($element_type:ty) => {
+        impl_into_java_for_array!(
+            $element_type,
+             0  1  2  3  4  5  6  7  8  9
+            10 11 12 13 14 15 16 17 18 19
+            20 21 22 23 24 25 26 27 28 29
+            30 31 32 33 34 35 36 37 38 39
+        );
+    };
+
+    ($element_type:ty, $( $count:tt )*) => {
+        $(
+            impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for [$element_type; $count] {
+                const JNI_SIGNATURE: &'static str = "[B";
+
+                type JavaType = AutoLocal<'env, 'borrow>;
+
+                fn into_java(self, env: &'borrow JNIEnv<'env>) -> Self::JavaType {
+                    (&self as &[$element_type]).into_java(env)
+                }
+            }
+        )*
+    };
+}
+
+impl_into_java_for_array!(u8);
+
 impl<'borrow, 'env, T> IntoJava<'borrow, 'env> for Option<T>
 where
     'env: 'borrow,
