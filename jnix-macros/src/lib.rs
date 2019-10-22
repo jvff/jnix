@@ -54,22 +54,24 @@ pub fn derive_into_java(input: TokenStream) -> TokenStream {
     TokenStream::from(tokens)
 }
 
-fn parse_java_class_name(attributes: &Vec<Attribute>) -> Option<String> {
+fn extract_jnix_attributes(
+    attributes: &Vec<Attribute>,
+) -> impl Iterator<Item = MetaNameValue> + '_ {
     let jnix_ident = Ident::new("jnix", Span::call_site());
-    let jnix_attribute = attributes
-        .iter()
-        .find(|attribute| attribute.path.is_ident(&jnix_ident))?;
-    let meta: MetaNameValue = jnix_attribute.parse_args().expect("Invalid jnix attribute");
 
-    if meta
-        .path
-        .is_ident(&Ident::new("class_name", Span::call_site()))
-    {
-        if let Lit::Str(class_name) = meta.lit {
-            Some(class_name.value())
-        } else {
-            None
-        }
+    attributes
+        .iter()
+        .filter(move |attribute| attribute.path.is_ident(&jnix_ident))
+        .map(|attribute| attribute.parse_args().expect("Invalid jnix attribute"))
+}
+
+fn parse_java_class_name(attributes: &Vec<Attribute>) -> Option<String> {
+    let class_name_ident = Ident::new("class_name", Span::call_site());
+    let attribute = extract_jnix_attributes(attributes)
+        .find(|attribute| attribute.path.is_ident(&class_name_ident))?;
+
+    if let Lit::Str(class_name) = attribute.lit {
+        Some(class_name.value())
     } else {
         None
     }
