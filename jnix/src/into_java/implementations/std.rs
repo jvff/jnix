@@ -1,6 +1,6 @@
 use crate::{AsJValue, IntoJava};
 use jni::{
-    objects::{AutoLocal, JObject, JValue},
+    objects::{AutoLocal, JList, JObject, JValue},
     signature::JavaType,
     sys::{jboolean, jdouble, jint, JNI_FALSE, JNI_TRUE},
     JNIEnv,
@@ -55,6 +55,35 @@ where
             Some(t) => t.into_java(env),
             None => env.auto_local(JObject::null()),
         }
+    }
+}
+
+impl<'borrow, 'env, T> IntoJava<'borrow, 'env> for Vec<T>
+where
+    'env: 'borrow,
+    T: IntoJava<'borrow, 'env, JavaType = AutoLocal<'env, 'borrow>>,
+{
+    const JNI_SIGNATURE: &'static str = "Ljava/util/ArrayList;";
+
+    type JavaType = AutoLocal<'env, 'borrow>;
+
+    fn into_java(self, env: &'borrow JNIEnv<'env>) -> Self::JavaType {
+        let initial_capacity = self.len();
+        let parameters = [JValue::Int(initial_capacity as jint)];
+
+        let list_object = env
+            .new_object("java/util/ArrayList", "(I)V", &parameters)
+            .expect("Failed to create ArrayList object");
+
+        let list =
+            JList::from_env(env, list_object).expect("Failed to create JList from ArrayList");
+
+        for element in self {
+            list.add(element.into_java(env).as_obj())
+                .expect("Failed to add element to ArrayList");
+        }
+
+        env.auto_local(list_object)
     }
 }
 
