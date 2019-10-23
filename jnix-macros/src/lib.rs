@@ -132,10 +132,21 @@ fn generate_enum_variants(
         bodies.push(match variant.fields {
             Fields::Unit => {
                 quote! {
-                    let variant = env.get_static_field(
+                    let variant_field_id = env.get_static_field_id(
                         #jni_class_name_literal,
                         #variant_name_literal,
                         concat!("L", #jni_class_name_literal, ";"),
+                    ).expect(concat!("Failed to convert ",
+                        #type_name_literal, "::", #variant_name_literal,
+                        " Rust enum variant into ",
+                        #class_name,
+                        " Java object",
+                    ));
+
+                    let variant = env.get_static_field_unchecked(
+                        #jni_class_name_literal,
+                        variant_field_id,
+                        jnix::jni::signature::JavaType::Object(#jni_class_name_literal.to_owned()),
                     ).expect(concat!("Failed to convert ",
                         #type_name_literal, "::", #variant_name_literal,
                         " Rust enum variant into ",
