@@ -17,9 +17,13 @@ pub fn derive_into_java(input: TokenStream) -> TokenStream {
     let jni_class_name = class_name.replace(".", "/");
     let jni_class_name_literal = LitStr::new(&jni_class_name, Span::call_site());
 
-    let fields = extract_struct_fields(parsed_input.data);
-    let (parameter_declarations, parameter_signatures, parameters) =
-        generate_parameters(&parsed_input.attrs, fields);
+    let into_java_body = generate_into_java_body(
+        &jni_class_name_literal,
+        type_name_literal,
+        class_name,
+        parsed_input.attrs,
+        parsed_input.data,
+    );
 
     let tokens = quote! {
         impl<'borrow, 'env: 'borrow> jnix::IntoJava<'borrow, 'env> for #type_name {
@@ -28,29 +32,7 @@ pub fn derive_into_java(input: TokenStream) -> TokenStream {
             type JavaType = jnix::jni::objects::AutoLocal<'env, 'borrow>;
 
             fn into_java(self, env: &'borrow jnix::jni::JNIEnv<'env>) -> Self::JavaType {
-                #( #parameter_declarations )*
-
-                let mut constructor_signature = String::with_capacity(
-                    1 + #( #parameter_signatures.as_bytes().len() + )* 2
-                );
-
-                constructor_signature.push_str("(");
-                #( constructor_signature.push_str(#parameter_signatures); )*
-                constructor_signature.push_str(")V");
-
-                let parameters = [ #( jnix::AsJValue::as_jvalue(&#parameters) ),* ];
-
-                let object = env
-                    .new_object(#jni_class_name_literal, constructor_signature, &parameters)
-                    .expect(concat!(
-                        "Failed to convert ",
-                        #type_name_literal,
-                        " Rust type into ",
-                        #class_name,
-                        " Java object",
-                    ));
-
-                env.auto_local(object)
+                #into_java_body
             }
         }
     };
@@ -82,14 +64,62 @@ fn parse_java_class_name(attributes: &Vec<Attribute>) -> Option<String> {
     }
 }
 
-fn extract_struct_fields(data: Data) -> Fields {
+fn generate_into_java_body(
+    jni_class_name_literal: &LitStr,
+    type_name_literal: LitStr,
+    class_name: String,
+    attributes: Vec<Attribute>,
+    data: Data,
+) -> TokenStream2 {
     match data {
-        Data::Struct(data) => data.fields,
-        _ => panic!("Dervie(IntoJava) only supported on structs"),
+        Data::Struct(data) => generate_struct_into_java_body(
+            jni_class_name_literal,
+            type_name_literal,
+            class_name,
+            attributes,
+            data.fields,
+        ),
+        Data::Enum(_) => panic!("Can't derive IntoJava for enums"),
+        Data::Union(_) => panic!("Can't derive IntoJava for unions"),
     }
 }
 
-fn generate_parameters(
+fn generate_struct_into_java_body(
+    jni_class_name_literal: &LitStr,
+    type_name_literal: LitStr,
+    class_name: String,
+    attributes: Vec<Attribute>,
+    fields: Fields,
+) -> TokenStream2 {
+    let (parameter_declarations, parameter_signatures, parameters) =
+        generate_struct_parameters(&attributes, fields);
+
+    quote! {
+        #( #parameter_declarations )*
+
+        let mut constructor_signature = String::with_capacity(
+            1 + #( #parameter_signatures.as_bytes().len() + )* 2
+        );
+
+        constructor_signature.push_str("(");
+        #( constructor_signature.push_str(#parameter_signatures); )*
+        constructor_signature.push_str(")V");
+
+        let parameters = [ #( jnix::AsJValue::as_jvalue(&#parameters) ),* ];
+
+        let object = env.new_object(#jni_class_name_literal, constructor_signature, &parameters)
+            .expect(concat!("Failed to convert ",
+                #type_name_literal,
+                " Rust type into ",
+                #class_name,
+                " Java object",
+            ));
+
+        env.auto_local(object)
+    }
+}
+
+fn generate_struct_parameters(
     attributes: &Vec<Attribute>,
     fields: Fields,
 ) -> (Vec<TokenStream2>, Vec<TokenStream2>, Vec<TokenStream2>) {
