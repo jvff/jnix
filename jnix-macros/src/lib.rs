@@ -118,6 +118,7 @@ fn generate_parameters(
 }
 
 fn parse_fields(attributes: &Vec<Attribute>, fields: Fields) -> Vec<(Member, String, Field)> {
+    let skip_ident = Ident::new("skip", Span::call_site());
     let skip_all_ident = Ident::new("skip_all", Span::call_site());
     let should_skip_all = extract_jnix_attributes(attributes)
         .any(|attribute: Path| attribute.is_ident(&skip_all_ident));
@@ -131,6 +132,10 @@ fn parse_fields(attributes: &Vec<Attribute>, fields: Fields) -> Vec<(Member, Str
         Fields::Unnamed(fields) => fields
             .unnamed
             .into_iter()
+            .filter(|field| {
+                !extract_jnix_attributes(&field.attrs)
+                    .any(|attribute: Path| attribute.is_ident(&skip_ident))
+            })
             .zip(0..)
             .map(|(field, counter)| {
                 let index = Index {
@@ -146,6 +151,10 @@ fn parse_fields(attributes: &Vec<Attribute>, fields: Fields) -> Vec<(Member, Str
         Fields::Named(fields) => fields
             .named
             .into_iter()
+            .filter(|field| {
+                !extract_jnix_attributes(&field.attrs)
+                    .any(|attribute: Path| attribute.is_ident(&skip_ident))
+            })
             .map(|field| {
                 let ident = field.ident.clone().expect("Named field with no name");
                 let binding = ident.to_string();
