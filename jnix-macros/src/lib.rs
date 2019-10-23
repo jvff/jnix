@@ -25,7 +25,7 @@ pub fn derive_into_java(input: TokenStream) -> TokenStream {
         impl<'borrow, 'env: 'borrow> jnix::IntoJava<'borrow, 'env> for #type_name {
             const JNI_SIGNATURE: &'static str = concat!("L", #jni_class_name_literal, ";");
 
-            type JavaType = jnix::jni::objects::JObject<'env>;
+            type JavaType = jnix::jni::objects::AutoLocal<'env, 'borrow>;
 
             fn into_java(self, env: &'borrow jnix::jni::JNIEnv<'env>) -> Self::JavaType {
                 #( #parameter_declarations )*
@@ -40,14 +40,17 @@ pub fn derive_into_java(input: TokenStream) -> TokenStream {
 
                 let parameters = [ #( jnix::AsJValue::as_jvalue(&#parameters) ),* ];
 
-                env.new_object(#jni_class_name_literal, constructor_signature, &parameters)
+                let object = env
+                    .new_object(#jni_class_name_literal, constructor_signature, &parameters)
                     .expect(concat!(
                         "Failed to convert ",
                         #type_name_literal,
                         " Rust type into ",
                         #class_name,
                         " Java object",
-                    ))
+                    ));
+
+                env.auto_local(object)
             }
         }
     };
