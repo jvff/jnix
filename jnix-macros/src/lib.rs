@@ -6,6 +6,7 @@ use quote::quote;
 use syn::{
     parse::Parse, parse_macro_input, parse_str, Attribute, Data, DeriveInput, ExprClosure, Field,
     Fields, Ident, Index, Lit, LitStr, Member, MetaNameValue, Pat, PatType, Path, Token, Type,
+    Variant,
 };
 
 #[proc_macro_derive(IntoJava, attributes(jnix))]
@@ -72,6 +73,12 @@ fn generate_into_java_body(
     data: Data,
 ) -> TokenStream2 {
     match data {
+        Data::Enum(data) => generate_enum_into_java_body(
+            jni_class_name_literal,
+            type_name_literal,
+            class_name,
+            data.variants.into_iter().collect(),
+        ),
         Data::Struct(data) => generate_struct_into_java_body(
             jni_class_name_literal,
             type_name_literal,
@@ -79,9 +86,79 @@ fn generate_into_java_body(
             attributes,
             data.fields,
         ),
-        Data::Enum(_) => panic!("Can't derive IntoJava for enums"),
         Data::Union(_) => panic!("Can't derive IntoJava for unions"),
     }
+}
+
+fn generate_enum_into_java_body(
+    jni_class_name_literal: &LitStr,
+    type_name_literal: LitStr,
+    class_name: String,
+    variants: Vec<Variant>,
+) -> TokenStream2 {
+    let (variant_names, variant_bodies) = generate_enum_variants(
+        jni_class_name_literal,
+        type_name_literal,
+        class_name,
+        variants,
+    );
+
+    quote! {
+        match self {
+            #(
+                Self::#variant_names => {
+                    #variant_bodies
+                }
+            )*
+        }
+    }
+}
+
+fn generate_enum_variants(
+    jni_class_name_literal: &LitStr,
+    type_name_literal: LitStr,
+    class_name: String,
+    variants: Vec<Variant>,
+) -> (Vec<Ident>, Vec<TokenStream2>) {
+    let mut names = Vec::with_capacity(variants.len());
+    let mut bodies = Vec::with_capacity(variants.len());
+
+    for variant in variants {
+        let variant_name = variant.ident.to_string();
+        let variant_name_literal = LitStr::new(&variant_name, Span::call_site());
+
+        names.push(variant.ident);
+
+        bodies.push(match variant.fields {
+            Fields::Unit => {
+                quote! {
+                    let variant = env.get_static_field(
+                        #jni_class_name_literal,
+                        #variant_name_literal,
+                        concat!("L", #jni_class_name_literal, ";"),
+                    ).expect(concat!("Failed to convert ",
+                        #type_name_literal, "::", #variant_name_literal,
+                        " Rust enum variant into ",
+                        #class_name,
+                        " Java object",
+                    ));
+
+                    match variant {
+                        jnix::jni::objects::JValue::Object(object) => env.auto_local(object),
+                        _ => panic!(concat!("Conversion from ",
+                            #type_name_literal, "::", #variant_name_literal,
+                            " Rust enum variant into ",
+                            #class_name,
+                            " Java object returned an invalid result.",
+                        )),
+                    }
+                }
+            }
+            _ => panic!("Only unit variants supported for enums"),
+        });
+    }
+
+    (names, bodies)
 }
 
 fn generate_struct_into_java_body(
