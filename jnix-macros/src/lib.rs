@@ -53,12 +53,24 @@ where
         .filter_map(|attribute| attribute.parse_args().ok())
 }
 
-fn parse_java_class_name(attributes: &Vec<Attribute>) -> Option<String> {
-    let class_name_ident = Ident::new("class_name", Span::call_site());
-    let attribute = extract_jnix_attributes(attributes)
-        .find(|attribute: &MetaNameValue| attribute.path.is_ident(&class_name_ident))?;
+fn extract_jnix_name_value_attribute(attributes: &Vec<Attribute>, name: &str) -> Option<Lit> {
+    let ident = Ident::new(name, Span::call_site());
 
-    if let Lit::Str(class_name) = attribute.lit {
+    extract_jnix_attributes(attributes)
+        .find(|attribute: &MetaNameValue| attribute.path.is_ident(&ident))
+        .map(|attribute| attribute.lit)
+}
+
+fn contains_jnix_flag_attribute(attributes: &Vec<Attribute>, flag: &str) -> bool {
+    let ident = Ident::new(flag, Span::call_site());
+
+    extract_jnix_attributes(&attributes).any(|attribute: Path| attribute.is_ident(&ident))
+}
+
+fn parse_java_class_name(attributes: &Vec<Attribute>) -> Option<String> {
+    let attribute = extract_jnix_name_value_attribute(attributes, "class_name")?;
+
+    if let Lit::Str(class_name) = attribute {
         Some(class_name.value())
     } else {
         None
@@ -413,12 +425,7 @@ fn generate_struct_parameters(
 }
 
 fn parse_fields(attributes: &Vec<Attribute>, fields: Fields) -> Vec<(Member, String, Field)> {
-    let skip_ident = Ident::new("skip", Span::call_site());
-    let skip_all_ident = Ident::new("skip_all", Span::call_site());
-    let should_skip_all = extract_jnix_attributes(attributes)
-        .any(|attribute: Path| attribute.is_ident(&skip_all_ident));
-
-    if should_skip_all {
+    if contains_jnix_flag_attribute(attributes, "skip_all") {
         return vec![];
     }
 
@@ -427,10 +434,7 @@ fn parse_fields(attributes: &Vec<Attribute>, fields: Fields) -> Vec<(Member, Str
         Fields::Unnamed(fields) => fields
             .unnamed
             .into_iter()
-            .filter(|field| {
-                !extract_jnix_attributes(&field.attrs)
-                    .any(|attribute: Path| attribute.is_ident(&skip_ident))
-            })
+            .filter(|field| !contains_jnix_flag_attribute(&field.attrs, "skip"))
             .zip(0..)
             .map(|(field, counter)| {
                 let index = Index {
@@ -446,10 +450,7 @@ fn parse_fields(attributes: &Vec<Attribute>, fields: Fields) -> Vec<(Member, Str
         Fields::Named(fields) => fields
             .named
             .into_iter()
-            .filter(|field| {
-                !extract_jnix_attributes(&field.attrs)
-                    .any(|attribute: Path| attribute.is_ident(&skip_ident))
-            })
+            .filter(|field| !contains_jnix_flag_attribute(&field.attrs, "skip"))
             .map(|field| {
                 let ident = field.ident.clone().expect("Named field with no name");
                 let binding = ident.to_string();
@@ -462,17 +463,14 @@ fn parse_fields(attributes: &Vec<Attribute>, fields: Fields) -> Vec<(Member, Str
 }
 
 fn generate_conversion(source: Ident, field: &Field) -> TokenStream2 {
-    let map_ident = Ident::new("map", Span::call_site());
-    let conversion = extract_jnix_attributes(&field.attrs)
-        .find(|attribute: &MetaNameValue| attribute.path.is_ident(&map_ident))
-        .map(|attribute| {
-            if let Lit::Str(closure) = attribute.lit {
-                parse_str::<ExprClosure>(&closure.value())
-                    .expect("Invalid closure syntax in jnix(map = ...) attribute")
-            } else {
-                panic!("Invalid jnix(map = ...) attribute");
-            }
-        });
+    let conversion = extract_jnix_name_value_attribute(&field.attrs, "map").map(|attribute| {
+        if let Lit::Str(closure) = attribute {
+            parse_str::<ExprClosure>(&closure.value())
+                .expect("Invalid closure syntax in jnix(map = ...) attribute")
+        } else {
+            panic!("Invalid jnix(map = ...) attribute");
+        }
+    });
 
     if let Some(mut closure) = conversion {
         prepare_map_closure(&mut closure, &field);
