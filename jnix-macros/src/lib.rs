@@ -114,62 +114,122 @@ fn generate_enum_into_java_body(
     }
 }
 
+#[derive(Clone)]
+enum TargetJavaEnumType {
+    Unknown,
+    EnumClass(Vec<Ident>),
+    SealedClass(Vec<Ident>, Vec<Fields>),
+}
+
+fn parse_enum_variants(variants: Vec<Variant>) -> TargetJavaEnumType {
+    use TargetJavaEnumType::*;
+
+    variants
+        .into_iter()
+        .fold(Unknown, |enum_type, variant| match enum_type {
+            Unknown => match variant.fields {
+                Fields::Unit => EnumClass(vec![variant.ident]),
+                fields @ Fields::Named(_) | fields @ Fields::Unnamed(_) => {
+                    SealedClass(vec![variant.ident], vec![fields])
+                }
+            },
+            EnumClass(mut variant_names) => {
+                variant_names.push(variant.ident);
+
+                match variant.fields {
+                    Fields::Unit => EnumClass(variant_names),
+                    fields @ Fields::Named(_) | fields @ Fields::Unnamed(_) => {
+                        let mut variant_fields = Vec::with_capacity(variant_names.len());
+
+                        variant_fields.resize(variant_names.len() - 1, Fields::Unit);
+                        variant_fields.push(fields);
+
+                        SealedClass(variant_names, variant_fields)
+                    }
+                }
+            }
+            SealedClass(mut variant_names, mut variant_fields) => {
+                variant_names.push(variant.ident);
+                variant_fields.push(variant.fields);
+
+                SealedClass(variant_names, variant_fields)
+            }
+        })
+}
+
 fn generate_enum_variants(
     jni_class_name_literal: &LitStr,
     type_name_literal: LitStr,
     class_name: String,
     variants: Vec<Variant>,
 ) -> (Vec<Ident>, Vec<TokenStream2>) {
-    let mut names = Vec::with_capacity(variants.len());
-    let mut bodies = Vec::with_capacity(variants.len());
+    match parse_enum_variants(variants) {
+        TargetJavaEnumType::Unknown => {
+            panic!("Can't derive IntoJava for an enum type with no variants")
+        }
+        TargetJavaEnumType::EnumClass(names) => {
+            let bodies = generate_enum_class_bodies(
+                jni_class_name_literal,
+                type_name_literal,
+                class_name,
+                &names,
+            );
 
-    for variant in variants {
-        let variant_name = variant.ident.to_string();
-        let variant_name_literal = LitStr::new(&variant_name, Span::call_site());
+            (names, bodies)
+        }
+        TargetJavaEnumType::SealedClass(_, _) => {
+            panic!("Currently only enums with unit variants can have IntoJava derived");
+        }
+    }
+}
 
-        names.push(variant.ident);
+fn generate_enum_class_bodies(
+    jni_class_name_literal: &LitStr,
+    type_name_literal: LitStr,
+    class_name: String,
+    variant_names: &Vec<Ident>,
+) -> Vec<TokenStream2> {
+    variant_names
+        .iter()
+        .map(|variant_name_ident| {
+            let variant_name = variant_name_ident.to_string();
+            let variant_name_literal = LitStr::new(&variant_name, Span::call_site());
 
-        bodies.push(match variant.fields {
-            Fields::Unit => {
-                quote! {
-                    let variant_field_id = env.get_static_field_id(
-                        #jni_class_name_literal,
-                        #variant_name_literal,
-                        concat!("L", #jni_class_name_literal, ";"),
-                    ).expect(concat!("Failed to convert ",
+            quote! {
+                let variant_field_id = env.get_static_field_id(
+                    #jni_class_name_literal,
+                    #variant_name_literal,
+                    concat!("L", #jni_class_name_literal, ";"),
+                ).expect(concat!("Failed to convert ",
+                    #type_name_literal, "::", #variant_name_literal,
+                    " Rust enum variant into ",
+                    #class_name,
+                    " Java object",
+                ));
+
+                let variant = env.get_static_field_unchecked(
+                    #jni_class_name_literal,
+                    variant_field_id,
+                    jnix::jni::signature::JavaType::Object(#jni_class_name_literal.to_owned()),
+                ).expect(concat!("Failed to convert ",
+                    #type_name_literal, "::", #variant_name_literal,
+                    " Rust enum variant into ",
+                    #class_name,
+                    " Java object",
+                ));
+
+                match variant {
+                    jnix::jni::objects::JValue::Object(object) => env.auto_local(object),
+                    _ => panic!(concat!("Conversion from ",
                         #type_name_literal, "::", #variant_name_literal,
                         " Rust enum variant into ",
                         #class_name,
-                        " Java object",
-                    ));
-
-                    let variant = env.get_static_field_unchecked(
-                        #jni_class_name_literal,
-                        variant_field_id,
-                        jnix::jni::signature::JavaType::Object(#jni_class_name_literal.to_owned()),
-                    ).expect(concat!("Failed to convert ",
-                        #type_name_literal, "::", #variant_name_literal,
-                        " Rust enum variant into ",
-                        #class_name,
-                        " Java object",
-                    ));
-
-                    match variant {
-                        jnix::jni::objects::JValue::Object(object) => env.auto_local(object),
-                        _ => panic!(concat!("Conversion from ",
-                            #type_name_literal, "::", #variant_name_literal,
-                            " Rust enum variant into ",
-                            #class_name,
-                            " Java object returned an invalid result.",
-                        )),
-                    }
+                        " Java object returned an invalid result.",
+                    )),
                 }
             }
-            _ => panic!("Only unit variants supported for enums"),
-        });
-    }
-
-    (names, bodies)
+        })
+        .collect()
 }
 
 fn generate_struct_into_java_body(
