@@ -96,7 +96,7 @@ fn generate_enum_into_java_body(
     class_name: String,
     variants: Vec<Variant>,
 ) -> TokenStream2 {
-    let (variant_names, variant_bodies) = generate_enum_variants(
+    let (variant_names, variant_parameters, variant_bodies) = generate_enum_variants(
         jni_class_name_literal,
         type_name_literal,
         class_name,
@@ -106,7 +106,7 @@ fn generate_enum_into_java_body(
     quote! {
         match self {
             #(
-                Self::#variant_names => {
+                Self::#variant_names #variant_parameters => {
                     #variant_bodies
                 }
             )*
@@ -162,12 +162,13 @@ fn generate_enum_variants(
     type_name_literal: LitStr,
     class_name: String,
     variants: Vec<Variant>,
-) -> (Vec<Ident>, Vec<TokenStream2>) {
+) -> (Vec<Ident>, Vec<Option<TokenStream2>>, Vec<TokenStream2>) {
     match parse_enum_variants(variants) {
         TargetJavaEnumType::Unknown => {
             panic!("Can't derive IntoJava for an enum type with no variants")
         }
         TargetJavaEnumType::EnumClass(names) => {
+            let mut parameters = Vec::with_capacity(names.len());
             let bodies = generate_enum_class_bodies(
                 jni_class_name_literal,
                 type_name_literal,
@@ -175,12 +176,41 @@ fn generate_enum_variants(
                 &names,
             );
 
-            (names, bodies)
+            parameters.resize(names.len(), None);
+
+            (names, parameters, bodies)
         }
-        TargetJavaEnumType::SealedClass(_, _) => {
-            panic!("Currently only enums with unit variants can have IntoJava derived");
+        TargetJavaEnumType::SealedClass(names, fields) => {
+            let parameters = generate_enum_parameters(&fields);
+            let bodies =
+                generate_sealed_class_bodies(type_name_literal, class_name, &names, fields);
+
+            (names, parameters, bodies)
         }
     }
+}
+
+fn generate_enum_parameters(variant_fields: &Vec<Fields>) -> Vec<Option<TokenStream2>> {
+    variant_fields
+        .iter()
+        .map(|fields| match fields {
+            Fields::Unit => None,
+            Fields::Named(named_fields) => {
+                let names = named_fields
+                    .named
+                    .iter()
+                    .map(|field| field.ident.clone().expect("Named field without a name"));
+
+                Some(quote! { { #( #names ),* } })
+            }
+            Fields::Unnamed(unnamed_fields) => {
+                let count = unnamed_fields.unnamed.len();
+                let names = (0..count).map(|id| Ident::new(&format!("_{}", id), Span::call_site()));
+
+                Some(quote! { ( #( #names ),* ) })
+            }
+        })
+        .collect()
 }
 
 fn generate_enum_class_bodies(
@@ -232,6 +262,46 @@ fn generate_enum_class_bodies(
         .collect()
 }
 
+fn generate_sealed_class_bodies(
+    type_name_literal: LitStr,
+    class_name: String,
+    variant_names: &Vec<Ident>,
+    variant_fields: Vec<Fields>,
+) -> Vec<TokenStream2> {
+    variant_names
+        .iter()
+        .zip(variant_fields.into_iter())
+        .map(|(variant_name_ident, fields)| {
+            let variant_class_name = format!("{}${}", class_name, variant_name_ident);
+            let variant_class_name_literal = LitStr::new(&variant_class_name, Span::call_site());
+
+            let (
+                _,
+                original_bindings,
+                source_bindings,
+                parameter_declarations,
+                parameter_signatures,
+                parameters,
+            ) = generate_struct_parameters(&Vec::new(), fields);
+
+            let body = generate_struct_or_struct_variant_into_java_body(
+                &variant_class_name_literal,
+                type_name_literal.clone(),
+                class_name.clone(),
+                parameter_declarations,
+                parameter_signatures,
+                parameters,
+            );
+
+            quote! {
+                #( let #source_bindings = #original_bindings; )*
+
+                #body
+            }
+        })
+        .collect()
+}
+
 fn generate_struct_into_java_body(
     jni_class_name_literal: &LitStr,
     type_name_literal: LitStr,
@@ -239,9 +309,33 @@ fn generate_struct_into_java_body(
     attributes: Vec<Attribute>,
     fields: Fields,
 ) -> TokenStream2 {
-    let (parameter_declarations, parameter_signatures, parameters) =
+    let (names, _, source_bindings, parameter_declarations, parameter_signatures, parameters) =
         generate_struct_parameters(&attributes, fields);
 
+    let body = generate_struct_or_struct_variant_into_java_body(
+        jni_class_name_literal,
+        type_name_literal,
+        class_name,
+        parameter_declarations,
+        parameter_signatures,
+        parameters,
+    );
+
+    quote! {
+        #( let #source_bindings = self.#names; )*
+
+        #body
+    }
+}
+
+fn generate_struct_or_struct_variant_into_java_body(
+    jni_class_name_literal: &LitStr,
+    type_name_literal: LitStr,
+    class_name: String,
+    parameter_declarations: Vec<TokenStream2>,
+    parameter_signatures: Vec<TokenStream2>,
+    parameters: Vec<TokenStream2>,
+) -> TokenStream2 {
     quote! {
         #( #parameter_declarations )*
 
@@ -270,14 +364,25 @@ fn generate_struct_into_java_body(
 fn generate_struct_parameters(
     attributes: &Vec<Attribute>,
     fields: Fields,
-) -> (Vec<TokenStream2>, Vec<TokenStream2>, Vec<TokenStream2>) {
+) -> (
+    Vec<Member>,
+    Vec<Ident>,
+    Vec<Ident>,
+    Vec<TokenStream2>,
+    Vec<TokenStream2>,
+    Vec<TokenStream2>,
+) {
     let named_fields = parse_fields(attributes, fields);
 
+    let mut names = Vec::with_capacity(named_fields.len());
+    let mut original_bindings = Vec::with_capacity(named_fields.len());
+    let mut source_bindings = Vec::with_capacity(named_fields.len());
     let mut declarations = Vec::with_capacity(named_fields.len());
     let mut signatures = Vec::with_capacity(named_fields.len());
     let mut parameters = Vec::with_capacity(named_fields.len());
 
     for (name, binding, field) in named_fields {
+        let original_binding = Ident::new(&binding, Span::call_site());
         let source_binding = Ident::new(&format!("_source_{}", binding), Span::call_site());
         let signature_binding = Ident::new(&format!("_signature_{}", binding), Span::call_site());
         let converted_binding = Ident::new(&format!("_converted_{}", binding), Span::call_site());
@@ -285,8 +390,10 @@ fn generate_struct_parameters(
 
         let conversion = generate_conversion(source_binding.clone(), &field);
 
+        names.push(name);
+        original_bindings.push(original_binding);
+        source_bindings.push(source_binding);
         declarations.push(quote! {
-            let #source_binding = self.#name;
             let #converted_binding = #conversion;
             let #signature_binding = #converted_binding.jni_signature();
             let #final_binding = #converted_binding.into_java(env);
@@ -295,7 +402,14 @@ fn generate_struct_parameters(
         parameters.push(quote! { #final_binding });
     }
 
-    (declarations, signatures, parameters)
+    (
+        names,
+        original_bindings,
+        source_bindings,
+        declarations,
+        signatures,
+        parameters,
+    )
 }
 
 fn parse_fields(attributes: &Vec<Attribute>, fields: Fields) -> Vec<(Member, String, Field)> {
