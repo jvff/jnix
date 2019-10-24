@@ -2,7 +2,7 @@ use crate::{AsJValue, IntoJava};
 use jni::{
     objects::{AutoLocal, JList, JObject, JValue},
     signature::JavaType,
-    sys::{jboolean, jdouble, jint, jsize, JNI_FALSE, JNI_TRUE},
+    sys::{jboolean, jdouble, jint, jshort, jsize, JNI_FALSE, JNI_TRUE},
     JNIEnv,
 };
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -18,6 +18,16 @@ impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for bool {
         } else {
             JNI_FALSE
         }
+    }
+}
+
+impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for i16 {
+    const JNI_SIGNATURE: &'static str = "S";
+
+    type JavaType = jshort;
+
+    fn into_java(self, _: &'borrow JNIEnv<'env>) -> Self::JavaType {
+        self as jshort
     }
 }
 
