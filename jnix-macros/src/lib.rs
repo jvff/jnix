@@ -1,16 +1,14 @@
 extern crate proc_macro;
 
 mod attributes;
+mod fields;
 mod generics;
 
-use crate::{attributes::JnixAttributes, generics::ParsedGenerics};
+use crate::{attributes::JnixAttributes, fields::ParsedFields, generics::ParsedGenerics};
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
-use syn::{
-    parse_macro_input, parse_str, Data, DeriveInput, ExprClosure, Field, Fields, Ident, Index,
-    LitStr, Member, Pat, PatType, Token, Type, Variant,
-};
+use syn::{parse_macro_input, Data, DeriveInput, Fields, Ident, LitStr, Variant};
 
 #[proc_macro_derive(IntoJava, attributes(jnix))]
 pub fn derive_into_java(input: TokenStream) -> TokenStream {
@@ -40,6 +38,7 @@ pub fn derive_into_java(input: TokenStream) -> TokenStream {
     let where_clause = parsed_generics.where_clause();
 
     let tokens = quote! {
+        #[allow(non_snake_case)]
         impl #impl_generics jnix::IntoJava #trait_generics for #type_name #type_generics
         #where_clause
         {
@@ -70,12 +69,10 @@ fn generate_into_java_body(
             class_name,
             data.variants.into_iter().collect(),
         ),
-        Data::Struct(data) => generate_struct_into_java_body(
+        Data::Struct(data) => ParsedFields::new(data.fields, attributes).generate_struct_into_java(
             jni_class_name_literal,
             type_name_literal,
             class_name,
-            attributes,
-            data.fields,
         ),
         Data::Union(_) => panic!("Can't derive IntoJava for unions"),
     }
@@ -273,222 +270,11 @@ fn generate_sealed_class_bodies(
             let variant_class_name = format!("{}${}", jni_class_name, variant_name_ident);
             let variant_class_name_literal = LitStr::new(&variant_class_name, Span::call_site());
 
-            let (
-                _,
-                original_bindings,
-                source_bindings,
-                parameter_declarations,
-                parameter_signatures,
-                parameters,
-            ) = generate_struct_parameters(JnixAttributes::empty(), fields);
-
-            let body = generate_struct_or_struct_variant_into_java_body(
+            ParsedFields::new(fields, JnixAttributes::empty()).generate_struct_variant_into_java(
                 &variant_class_name_literal,
                 type_name_literal.clone(),
                 class_name.clone(),
-                parameter_declarations,
-                parameter_signatures,
-                parameters,
-            );
-
-            quote! {
-                #( let #source_bindings = #original_bindings; )*
-
-                #body
-            }
+            )
         })
         .collect()
-}
-
-fn generate_struct_into_java_body(
-    jni_class_name_literal: &LitStr,
-    type_name_literal: LitStr,
-    class_name: String,
-    attributes: JnixAttributes,
-    fields: Fields,
-) -> TokenStream2 {
-    let (names, _, source_bindings, parameter_declarations, parameter_signatures, parameters) =
-        generate_struct_parameters(attributes, fields);
-
-    let body = generate_struct_or_struct_variant_into_java_body(
-        jni_class_name_literal,
-        type_name_literal,
-        class_name,
-        parameter_declarations,
-        parameter_signatures,
-        parameters,
-    );
-
-    quote! {
-        #( let #source_bindings = self.#names; )*
-
-        #body
-    }
-}
-
-fn generate_struct_or_struct_variant_into_java_body(
-    jni_class_name_literal: &LitStr,
-    type_name_literal: LitStr,
-    class_name: String,
-    parameter_declarations: Vec<TokenStream2>,
-    parameter_signatures: Vec<TokenStream2>,
-    parameters: Vec<TokenStream2>,
-) -> TokenStream2 {
-    quote! {
-        #( #parameter_declarations )*
-
-        let mut constructor_signature = String::with_capacity(
-            1 + #( #parameter_signatures.as_bytes().len() + )* 2
-        );
-
-        constructor_signature.push_str("(");
-        #( constructor_signature.push_str(#parameter_signatures); )*
-        constructor_signature.push_str(")V");
-
-        let parameters = [ #( jnix::AsJValue::as_jvalue(&#parameters) ),* ];
-
-        let object = env.new_object(#jni_class_name_literal, constructor_signature, &parameters)
-            .expect(concat!("Failed to convert ",
-                #type_name_literal,
-                " Rust type into ",
-                #class_name,
-                " Java object",
-            ));
-
-        env.auto_local(object)
-    }
-}
-
-fn generate_struct_parameters(
-    attributes: JnixAttributes,
-    fields: Fields,
-) -> (
-    Vec<Member>,
-    Vec<Ident>,
-    Vec<Ident>,
-    Vec<TokenStream2>,
-    Vec<TokenStream2>,
-    Vec<TokenStream2>,
-) {
-    let named_fields = parse_fields(attributes, fields);
-
-    let mut names = Vec::with_capacity(named_fields.len());
-    let mut original_bindings = Vec::with_capacity(named_fields.len());
-    let mut source_bindings = Vec::with_capacity(named_fields.len());
-    let mut declarations = Vec::with_capacity(named_fields.len());
-    let mut signatures = Vec::with_capacity(named_fields.len());
-    let mut parameters = Vec::with_capacity(named_fields.len());
-
-    for (name, binding, field) in named_fields {
-        let original_binding = Ident::new(&binding, Span::call_site());
-        let source_binding = Ident::new(&format!("_source_{}", binding), Span::call_site());
-        let signature_binding = Ident::new(&format!("_signature_{}", binding), Span::call_site());
-        let converted_binding = Ident::new(&format!("_converted_{}", binding), Span::call_site());
-        let final_binding = Ident::new(&format!("_final_{}", binding), Span::call_site());
-
-        let conversion = generate_conversion(source_binding.clone(), &field);
-
-        names.push(name);
-        original_bindings.push(original_binding);
-        source_bindings.push(source_binding);
-        declarations.push(quote! {
-            let #converted_binding = #conversion;
-            let #signature_binding = #converted_binding.jni_signature();
-            let #final_binding = #converted_binding.into_java(env);
-        });
-        signatures.push(quote! { #signature_binding });
-        parameters.push(quote! { #final_binding });
-    }
-
-    (
-        names,
-        original_bindings,
-        source_bindings,
-        declarations,
-        signatures,
-        parameters,
-    )
-}
-
-fn parse_fields(attributes: JnixAttributes, fields: Fields) -> Vec<(Member, String, Field)> {
-    if attributes.has_flag("skip_all") {
-        return vec![];
-    }
-
-    match fields {
-        Fields::Unit => vec![],
-        Fields::Unnamed(fields) => fields
-            .unnamed
-            .into_iter()
-            .filter(|field| JnixAttributes::new(&field.attrs).has_flag("skip"))
-            .zip(0..)
-            .map(|(field, counter)| {
-                let index = Index {
-                    index: counter,
-                    span: Span::call_site(),
-                };
-                let name = Member::Unnamed(index);
-                let binding = format!("_{}", counter);
-
-                (name, binding, field)
-            })
-            .collect(),
-        Fields::Named(fields) => fields
-            .named
-            .into_iter()
-            .filter(|field| JnixAttributes::new(&field.attrs).has_flag("skip"))
-            .map(|field| {
-                let ident = field.ident.clone().expect("Named field with no name");
-                let binding = ident.to_string();
-                let name = Member::Named(ident);
-
-                (name, binding, field)
-            })
-            .collect(),
-    }
-}
-
-fn generate_conversion(source: Ident, field: &Field) -> TokenStream2 {
-    let attributes = JnixAttributes::new(&field.attrs);
-    let conversion = attributes.get_value("map").map(|lit_str| {
-        parse_str(&lit_str.value()).expect("Invalid closure syntax in jnix(map = ...) attribute")
-    });
-
-    if let Some(mut closure) = conversion {
-        prepare_map_closure(&mut closure, &field);
-
-        quote! { (#closure)(#source) }
-    } else {
-        quote! { #source }
-    }
-}
-
-fn prepare_map_closure(closure: &mut ExprClosure, field: &Field) {
-    assert!(
-        closure.inputs.len() == 1,
-        "Too many parameters in jnix(map = ...) closure"
-    );
-
-    let input = closure
-        .inputs
-        .pop()
-        .expect("Missing parameter in jnix(map = ...) closure")
-        .into_value();
-
-    closure
-        .inputs
-        .push_value(add_type_to_parameter(input, &field.ty));
-}
-
-fn add_type_to_parameter(parameter: Pat, ty: &Type) -> Pat {
-    if let &Pat::Type(_) = &parameter {
-        parameter
-    } else {
-        Pat::Type(PatType {
-            attrs: vec![],
-            pat: Box::new(parameter),
-            colon_token: Token![:](Span::call_site()),
-            ty: Box::new(ty.clone()),
-        })
-    }
 }
