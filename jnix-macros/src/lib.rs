@@ -259,8 +259,13 @@ fn generate_enum_variants(
         }
         TargetJavaEnumType::SealedClass(names, fields) => {
             let parameters = generate_enum_parameters(&fields);
-            let bodies =
-                generate_sealed_class_bodies(type_name_literal, class_name, &names, fields);
+            let bodies = generate_sealed_class_bodies(
+                jni_class_name_literal,
+                type_name_literal,
+                class_name,
+                &names,
+                fields,
+            );
 
             (names, parameters, bodies)
         }
@@ -340,6 +345,7 @@ fn generate_enum_class_bodies(
 }
 
 fn generate_sealed_class_bodies(
+    jni_class_name_literal: &LitStr,
     type_name_literal: LitStr,
     class_name: String,
     variant_names: &Vec<Ident>,
@@ -349,7 +355,8 @@ fn generate_sealed_class_bodies(
         .iter()
         .zip(variant_fields.into_iter())
         .map(|(variant_name_ident, fields)| {
-            let variant_class_name = format!("{}${}", class_name, variant_name_ident);
+            let jni_class_name = jni_class_name_literal.value();
+            let variant_class_name = format!("{}${}", jni_class_name, variant_name_ident);
             let variant_class_name_literal = LitStr::new(&variant_class_name, Span::call_site());
 
             let (
