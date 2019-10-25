@@ -35,6 +35,8 @@ pub fn derive_into_java(input: TokenStream) -> TokenStream {
 
     let type_parameters = parsed_generics.type_parameters();
 
+    let debug = attributes.has_flag("debug");
+
     let into_java_body = generate_into_java_body(
         &jni_class_name_literal,
         type_name_literal,
@@ -59,7 +61,11 @@ pub fn derive_into_java(input: TokenStream) -> TokenStream {
         }
     };
 
-    TokenStream::from(tokens)
+    if debug {
+        panic!("{}", TokenStream::from(tokens));
+    } else {
+        TokenStream::from(tokens)
+    }
 }
 
 fn generate_into_java_body(
