@@ -1,5 +1,8 @@
 extern crate proc_macro;
 
+mod generics;
+
+use crate::generics::ParsedGenerics;
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
@@ -26,8 +29,11 @@ pub fn derive_into_java(input: TokenStream) -> TokenStream {
         parsed_input.data,
     );
 
-    let (impl_generics, trait_generics, type_generics, where_clause) =
-        prepare_generics(parsed_input.generics);
+    let parsed_generics = ParsedGenerics::new(&parsed_input.generics);
+    let impl_generics = parsed_generics.impl_generics();
+    let trait_generics = parsed_generics.trait_generics();
+    let type_generics = parsed_generics.type_generics();
+    let where_clause = parsed_generics.where_clause();
 
     let tokens = quote! {
         impl #impl_generics jnix::IntoJava #trait_generics for #type_name #type_generics
@@ -44,66 +50,6 @@ pub fn derive_into_java(input: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(tokens)
-}
-
-fn prepare_generics(
-    mut generics: Generics,
-) -> (
-    TokenStream2,
-    TokenStream2,
-    Option<TokenStream2>,
-    TokenStream2,
-) {
-    let mut type_generics = vec![];
-
-    type_generics.extend(generics.lifetimes().map(|lifetime_definition| {
-        let lifetime = &lifetime_definition.lifetime;
-        quote! { #lifetime }
-    }));
-
-    type_generics.extend(generics.type_params().map(|type_param| {
-        let type_param_name = &type_param.ident;
-        quote! { #type_param_name }
-    }));
-
-    let mut impl_generics = vec![quote! { 'borrow }, quote! { 'env }];
-
-    impl_generics.extend(type_generics.iter().cloned());
-
-    let type_generics = if type_generics.is_empty() {
-        None
-    } else {
-        Some(quote! { < #( #type_generics ),* > })
-    };
-
-    let mut constraints: Vec<_> = generics
-        .lifetimes()
-        .filter(|definition| definition.colon_token.is_some())
-        .map(|definition| quote! { #definition })
-        .collect();
-
-    constraints.extend(generics.type_params_mut().map(|type_param| {
-        if type_param.colon_token.is_none() {
-            type_param.colon_token = Some(Token![:](Span::call_site()));
-        }
-
-        type_param.bounds.push(TypeParamBound::Trait(TraitBound {
-            paren_token: None,
-            modifier: TraitBoundModifier::None,
-            lifetimes: None,
-            path: parse_str("jnix::IntoJava<'borrow, 'env>")
-                .expect("Invalid syntax in hardcoded string"),
-        }));
-
-        quote! { #type_param }
-    }));
-
-    (
-        quote! { < #( #impl_generics ),* > },
-        quote! { <'borrow, 'env> },
-        type_generics,
-        quote! { where 'env: 'borrow, #( #constraints ),* },
-    )
 }
 
 fn extract_jnix_attributes<T>(attributes: &Vec<Attribute>) -> impl Iterator<Item = T> + '_
