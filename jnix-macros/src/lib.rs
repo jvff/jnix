@@ -1,23 +1,27 @@
 extern crate proc_macro;
 
+mod attributes;
 mod generics;
 
-use crate::generics::ParsedGenerics;
+use crate::{attributes::JnixAttributes, generics::ParsedGenerics};
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{
-    parse::Parse, parse_macro_input, parse_str, Attribute, Data, DeriveInput, ExprClosure, Field,
-    Fields, Generics, Ident, Index, Lit, LitStr, Member, MetaNameValue, Pat, PatType, Path, Token,
-    TraitBound, TraitBoundModifier, Type, TypeParamBound, Variant,
+    parse_macro_input, parse_str, Data, DeriveInput, ExprClosure, Field, Fields, Ident, Index,
+    LitStr, Member, Pat, PatType, Token, Type, Variant,
 };
 
 #[proc_macro_derive(IntoJava, attributes(jnix))]
 pub fn derive_into_java(input: TokenStream) -> TokenStream {
     let parsed_input = parse_macro_input!(input as DeriveInput);
+    let attributes = JnixAttributes::new(&parsed_input.attrs);
     let type_name = parsed_input.ident;
     let type_name_literal = LitStr::new(&type_name.to_string(), Span::call_site());
-    let class_name = parse_java_class_name(&parsed_input.attrs).expect("Missing Java class name");
+    let class_name = attributes
+        .get_value("class_name")
+        .expect("Missing Java class name")
+        .value();
     let jni_class_name = class_name.replace(".", "/");
     let jni_class_name_literal = LitStr::new(&jni_class_name, Span::call_site());
 
@@ -25,7 +29,7 @@ pub fn derive_into_java(input: TokenStream) -> TokenStream {
         &jni_class_name_literal,
         type_name_literal,
         class_name,
-        parsed_input.attrs,
+        attributes,
         parsed_input.data,
     );
 
@@ -52,47 +56,11 @@ pub fn derive_into_java(input: TokenStream) -> TokenStream {
     TokenStream::from(tokens)
 }
 
-fn extract_jnix_attributes<T>(attributes: &Vec<Attribute>) -> impl Iterator<Item = T> + '_
-where
-    T: Parse,
-{
-    let jnix_ident = Ident::new("jnix", Span::call_site());
-
-    attributes
-        .iter()
-        .filter(move |attribute| attribute.path.is_ident(&jnix_ident))
-        .filter_map(|attribute| attribute.parse_args().ok())
-}
-
-fn extract_jnix_name_value_attribute(attributes: &Vec<Attribute>, name: &str) -> Option<Lit> {
-    let ident = Ident::new(name, Span::call_site());
-
-    extract_jnix_attributes(attributes)
-        .find(|attribute: &MetaNameValue| attribute.path.is_ident(&ident))
-        .map(|attribute| attribute.lit)
-}
-
-fn contains_jnix_flag_attribute(attributes: &Vec<Attribute>, flag: &str) -> bool {
-    let ident = Ident::new(flag, Span::call_site());
-
-    extract_jnix_attributes(&attributes).any(|attribute: Path| attribute.is_ident(&ident))
-}
-
-fn parse_java_class_name(attributes: &Vec<Attribute>) -> Option<String> {
-    let attribute = extract_jnix_name_value_attribute(attributes, "class_name")?;
-
-    if let Lit::Str(class_name) = attribute {
-        Some(class_name.value())
-    } else {
-        None
-    }
-}
-
 fn generate_into_java_body(
     jni_class_name_literal: &LitStr,
     type_name_literal: LitStr,
     class_name: String,
-    attributes: Vec<Attribute>,
+    attributes: JnixAttributes,
     data: Data,
 ) -> TokenStream2 {
     match data {
@@ -312,7 +280,7 @@ fn generate_sealed_class_bodies(
                 parameter_declarations,
                 parameter_signatures,
                 parameters,
-            ) = generate_struct_parameters(&Vec::new(), fields);
+            ) = generate_struct_parameters(JnixAttributes::empty(), fields);
 
             let body = generate_struct_or_struct_variant_into_java_body(
                 &variant_class_name_literal,
@@ -336,11 +304,11 @@ fn generate_struct_into_java_body(
     jni_class_name_literal: &LitStr,
     type_name_literal: LitStr,
     class_name: String,
-    attributes: Vec<Attribute>,
+    attributes: JnixAttributes,
     fields: Fields,
 ) -> TokenStream2 {
     let (names, _, source_bindings, parameter_declarations, parameter_signatures, parameters) =
-        generate_struct_parameters(&attributes, fields);
+        generate_struct_parameters(attributes, fields);
 
     let body = generate_struct_or_struct_variant_into_java_body(
         jni_class_name_literal,
@@ -392,7 +360,7 @@ fn generate_struct_or_struct_variant_into_java_body(
 }
 
 fn generate_struct_parameters(
-    attributes: &Vec<Attribute>,
+    attributes: JnixAttributes,
     fields: Fields,
 ) -> (
     Vec<Member>,
@@ -442,8 +410,8 @@ fn generate_struct_parameters(
     )
 }
 
-fn parse_fields(attributes: &Vec<Attribute>, fields: Fields) -> Vec<(Member, String, Field)> {
-    if contains_jnix_flag_attribute(attributes, "skip_all") {
+fn parse_fields(attributes: JnixAttributes, fields: Fields) -> Vec<(Member, String, Field)> {
+    if attributes.has_flag("skip_all") {
         return vec![];
     }
 
@@ -452,7 +420,7 @@ fn parse_fields(attributes: &Vec<Attribute>, fields: Fields) -> Vec<(Member, Str
         Fields::Unnamed(fields) => fields
             .unnamed
             .into_iter()
-            .filter(|field| !contains_jnix_flag_attribute(&field.attrs, "skip"))
+            .filter(|field| JnixAttributes::new(&field.attrs).has_flag("skip"))
             .zip(0..)
             .map(|(field, counter)| {
                 let index = Index {
@@ -468,7 +436,7 @@ fn parse_fields(attributes: &Vec<Attribute>, fields: Fields) -> Vec<(Member, Str
         Fields::Named(fields) => fields
             .named
             .into_iter()
-            .filter(|field| !contains_jnix_flag_attribute(&field.attrs, "skip"))
+            .filter(|field| JnixAttributes::new(&field.attrs).has_flag("skip"))
             .map(|field| {
                 let ident = field.ident.clone().expect("Named field with no name");
                 let binding = ident.to_string();
@@ -481,13 +449,9 @@ fn parse_fields(attributes: &Vec<Attribute>, fields: Fields) -> Vec<(Member, Str
 }
 
 fn generate_conversion(source: Ident, field: &Field) -> TokenStream2 {
-    let conversion = extract_jnix_name_value_attribute(&field.attrs, "map").map(|attribute| {
-        if let Lit::Str(closure) = attribute {
-            parse_str::<ExprClosure>(&closure.value())
-                .expect("Invalid closure syntax in jnix(map = ...) attribute")
-        } else {
-            panic!("Invalid jnix(map = ...) attribute");
-        }
+    let attributes = JnixAttributes::new(&field.attrs);
+    let conversion = attributes.get_value("map").map(|lit_str| {
+        parse_str(&lit_str.value()).expect("Invalid closure syntax in jnix(map = ...) attribute")
     });
 
     if let Some(mut closure) = conversion {
