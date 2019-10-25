@@ -4,7 +4,11 @@ mod attributes;
 mod fields;
 mod generics;
 
-use crate::{attributes::JnixAttributes, fields::ParsedFields, generics::ParsedGenerics};
+use crate::{
+    attributes::JnixAttributes,
+    fields::ParsedFields,
+    generics::{ParsedGenerics, TypeParameters},
+};
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
@@ -23,19 +27,22 @@ pub fn derive_into_java(input: TokenStream) -> TokenStream {
     let jni_class_name = class_name.replace(".", "/");
     let jni_class_name_literal = LitStr::new(&jni_class_name, Span::call_site());
 
+    let parsed_generics = ParsedGenerics::new(&parsed_input.generics);
+    let impl_generics = parsed_generics.impl_generics();
+    let trait_generics = parsed_generics.trait_generics();
+    let type_generics = parsed_generics.type_generics();
+    let where_clause = parsed_generics.where_clause();
+
+    let type_parameters = parsed_generics.type_parameters();
+
     let into_java_body = generate_into_java_body(
         &jni_class_name_literal,
         type_name_literal,
         class_name,
         attributes,
         parsed_input.data,
+        type_parameters,
     );
-
-    let parsed_generics = ParsedGenerics::new(&parsed_input.generics);
-    let impl_generics = parsed_generics.impl_generics();
-    let trait_generics = parsed_generics.trait_generics();
-    let type_generics = parsed_generics.type_generics();
-    let where_clause = parsed_generics.where_clause();
 
     let tokens = quote! {
         #[allow(non_snake_case)]
@@ -61,6 +68,7 @@ fn generate_into_java_body(
     class_name: String,
     attributes: JnixAttributes,
     data: Data,
+    type_parameters: TypeParameters,
 ) -> TokenStream2 {
     match data {
         Data::Enum(data) => generate_enum_into_java_body(
@@ -68,11 +76,13 @@ fn generate_into_java_body(
             type_name_literal,
             class_name,
             data.variants.into_iter().collect(),
+            type_parameters,
         ),
         Data::Struct(data) => ParsedFields::new(data.fields, attributes).generate_struct_into_java(
             jni_class_name_literal,
             type_name_literal,
             class_name,
+            &type_parameters,
         ),
         Data::Union(_) => panic!("Can't derive IntoJava for unions"),
     }
@@ -83,12 +93,14 @@ fn generate_enum_into_java_body(
     type_name_literal: LitStr,
     class_name: String,
     variants: Vec<Variant>,
+    type_parameters: TypeParameters,
 ) -> TokenStream2 {
     let (variant_names, variant_parameters, variant_bodies) = generate_enum_variants(
         jni_class_name_literal,
         type_name_literal,
         class_name,
         variants,
+        type_parameters,
     );
 
     quote! {
@@ -150,6 +162,7 @@ fn generate_enum_variants(
     type_name_literal: LitStr,
     class_name: String,
     variants: Vec<Variant>,
+    type_parameters: TypeParameters,
 ) -> (Vec<Ident>, Vec<Option<TokenStream2>>, Vec<TokenStream2>) {
     match parse_enum_variants(variants) {
         TargetJavaEnumType::Unknown => {
@@ -176,6 +189,7 @@ fn generate_enum_variants(
                 class_name,
                 &names,
                 fields,
+                type_parameters,
             );
 
             (names, parameters, bodies)
@@ -261,6 +275,7 @@ fn generate_sealed_class_bodies(
     class_name: String,
     variant_names: &Vec<Ident>,
     variant_fields: Vec<Fields>,
+    type_parameters: TypeParameters,
 ) -> Vec<TokenStream2> {
     variant_names
         .iter()
@@ -274,6 +289,7 @@ fn generate_sealed_class_bodies(
                 &variant_class_name_literal,
                 type_name_literal.clone(),
                 class_name.clone(),
+                &type_parameters,
             )
         })
         .collect()
