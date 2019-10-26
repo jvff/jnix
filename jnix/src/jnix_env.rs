@@ -31,6 +31,7 @@ impl<'env> JnixEnv<'env> {
     pub fn get_class<'a>(&self, class_name: impl Into<Cow<'a, str>>) -> GlobalRef {
         let class_name = class_name.into();
         let mut cache = CLASS_CACHE.lock();
+        log::debug!("JnixEnv::get_class({})", class_name);
 
         if let Some(class) = cache.get(class_name.as_ref()) {
             class.clone()
@@ -56,6 +57,7 @@ impl<'env> JnixEnv<'env> {
 
     fn load_class(&self, class_name: impl AsRef<str>) -> GlobalRef {
         let class_name = class_name.as_ref();
+        log::debug!("JnixEnv::load_class({})", class_name);
         let local_ref = self
             .env
             .find_class(class_name)
