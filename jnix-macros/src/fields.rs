@@ -152,7 +152,7 @@ impl ParsedFields {
     pub fn generate_struct_variant_into_java(
         &self,
         jni_class_name_literal: &LitStr,
-        type_name_literal: LitStr,
+        type_name_literal: &LitStr,
         class_name: String,
         type_parameters: &TypeParameters,
     ) -> TokenStream {
@@ -174,7 +174,7 @@ impl ParsedFields {
     pub fn generate_struct_into_java(
         &self,
         jni_class_name_literal: &LitStr,
-        type_name_literal: LitStr,
+        type_name_literal: &LitStr,
         class_name: String,
         type_parameters: &TypeParameters,
     ) -> TokenStream {
@@ -196,7 +196,7 @@ impl ParsedFields {
     fn generate_into_java_conversion(
         &self,
         jni_class_name_literal: &LitStr,
-        type_name_literal: LitStr,
+        type_name_literal: &LitStr,
         class_name: String,
         type_parameters: &TypeParameters,
     ) -> TokenStream {

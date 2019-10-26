@@ -39,7 +39,7 @@ pub fn derive_into_java(input: TokenStream) -> TokenStream {
 
     let into_java_body = generate_into_java_body(
         &jni_class_name_literal,
-        type_name_literal,
+        &type_name_literal,
         class_name,
         attributes,
         parsed_input.data,
@@ -70,7 +70,7 @@ pub fn derive_into_java(input: TokenStream) -> TokenStream {
 
 fn generate_into_java_body(
     jni_class_name_literal: &LitStr,
-    type_name_literal: LitStr,
+    type_name_literal: &LitStr,
     class_name: String,
     attributes: JnixAttributes,
     data: Data,
@@ -96,7 +96,7 @@ fn generate_into_java_body(
 
 fn generate_enum_into_java_body(
     jni_class_name_literal: &LitStr,
-    type_name_literal: LitStr,
+    type_name_literal: &LitStr,
     class_name: String,
     variants: Vec<Variant>,
     type_parameters: TypeParameters,
@@ -165,7 +165,7 @@ fn parse_enum_variants(variants: Vec<Variant>) -> TargetJavaEnumType {
 
 fn generate_enum_variants(
     jni_class_name_literal: &LitStr,
-    type_name_literal: LitStr,
+    type_name_literal: &LitStr,
     class_name: String,
     variants: Vec<Variant>,
     type_parameters: TypeParameters,
@@ -228,7 +228,7 @@ fn generate_enum_parameters(variant_fields: &Vec<Fields>) -> Vec<Option<TokenStr
 
 fn generate_enum_class_bodies(
     jni_class_name_literal: &LitStr,
-    type_name_literal: LitStr,
+    type_name_literal: &LitStr,
     class_name: String,
     variant_names: &Vec<Ident>,
 ) -> Vec<TokenStream2> {
@@ -277,7 +277,7 @@ fn generate_enum_class_bodies(
 
 fn generate_sealed_class_bodies(
     jni_class_name_literal: &LitStr,
-    type_name_literal: LitStr,
+    type_name_literal: &LitStr,
     class_name: String,
     variant_names: &Vec<Ident>,
     variant_fields: Vec<Fields>,
@@ -293,7 +293,7 @@ fn generate_sealed_class_bodies(
 
             ParsedFields::new(fields, JnixAttributes::empty()).generate_struct_variant_into_java(
                 &variant_class_name_literal,
-                type_name_literal.clone(),
+                &type_name_literal,
                 class_name.clone(),
                 &type_parameters,
             )
