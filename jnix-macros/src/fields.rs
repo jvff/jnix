@@ -214,6 +214,7 @@ impl ParsedFields {
             constructor_signature.push_str("(");
             #( constructor_signature.push_str(#signature_bindings); )*
             constructor_signature.push_str(")V");
+            log::debug!("Constructor signature: {}", constructor_signature);
 
             let parameters = [ #( jnix::AsJValue::as_jvalue(&#final_bindings) ),* ];
 
