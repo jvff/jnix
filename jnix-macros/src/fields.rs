@@ -217,7 +217,8 @@ impl ParsedFields {
 
             let parameters = [ #( jnix::AsJValue::as_jvalue(&#final_bindings) ),* ];
 
-            let object = env.new_object(#jni_class_name_literal, constructor_signature, &parameters)
+            let class = env.get_class(#jni_class_name_literal);
+            let object = env.new_object(&class, constructor_signature, &parameters)
                 .expect(concat!("Failed to convert ",
                     #type_name_literal,
                     " Rust type into ",

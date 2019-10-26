@@ -128,8 +128,9 @@ where
         let initial_capacity = self.len();
         let parameters = [JValue::Int(initial_capacity as jint)];
 
+        let class = env.get_class("java/util/ArrayList");
         let list_object = env
-            .new_object("java/util/ArrayList", "(I)V", &parameters)
+            .new_object(&class, "(I)V", &parameters)
             .expect("Failed to create ArrayList object");
 
         let list =
@@ -244,12 +245,9 @@ impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for SocketAddr {
         let port = self.port() as jint;
         let parameters = [JValue::Object(ip_address.as_obj()), JValue::Int(port)];
 
+        let class = env.get_class("java/net/InetAddress");
         let object = env
-            .new_object(
-                "java/net/InetAddress",
-                "(Ljava/net/InetAddress;I)V",
-                &parameters,
-            )
+            .new_object(&class, "(Ljava/net/InetAddress;I)V", &parameters)
             .expect("Failed to convert SocketAddr Rust type into InetSocketAddress Java object");
 
         env.auto_local(object)
