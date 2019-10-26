@@ -55,7 +55,7 @@ pub fn derive_into_java(input: TokenStream) -> TokenStream {
 
             type JavaType = jnix::jni::objects::AutoLocal<'env, 'borrow>;
 
-            fn into_java(self, env: &'borrow jnix::jni::JNIEnv<'env>) -> Self::JavaType {
+            fn into_java(self, env: &'borrow jnix::JnixEnv<'env>) -> Self::JavaType {
                 #into_java_body
             }
         }

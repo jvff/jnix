@@ -1,9 +1,8 @@
-use crate::{AsJValue, IntoJava};
+use crate::{AsJValue, IntoJava, JnixEnv};
 use jni::{
     objects::{AutoLocal, JList, JObject, JValue},
     signature::JavaType,
     sys::{jboolean, jdouble, jint, jshort, jsize, JNI_FALSE, JNI_TRUE},
-    JNIEnv,
 };
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
@@ -12,7 +11,7 @@ impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for bool {
 
     type JavaType = jboolean;
 
-    fn into_java(self, _: &'borrow JNIEnv<'env>) -> Self::JavaType {
+    fn into_java(self, _: &'borrow JnixEnv<'env>) -> Self::JavaType {
         if self {
             JNI_TRUE
         } else {
@@ -26,7 +25,7 @@ impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for i16 {
 
     type JavaType = jshort;
 
-    fn into_java(self, _: &'borrow JNIEnv<'env>) -> Self::JavaType {
+    fn into_java(self, _: &'borrow JnixEnv<'env>) -> Self::JavaType {
         self as jshort
     }
 }
@@ -36,7 +35,7 @@ impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for i32 {
 
     type JavaType = jint;
 
-    fn into_java(self, _: &'borrow JNIEnv<'env>) -> Self::JavaType {
+    fn into_java(self, _: &'borrow JnixEnv<'env>) -> Self::JavaType {
         self as jint
     }
 }
@@ -46,7 +45,7 @@ impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for f64 {
 
     type JavaType = jdouble;
 
-    fn into_java(self, _: &'borrow JNIEnv<'env>) -> Self::JavaType {
+    fn into_java(self, _: &'borrow JnixEnv<'env>) -> Self::JavaType {
         self as jdouble
     }
 }
@@ -56,7 +55,7 @@ impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for &'_ [u8] {
 
     type JavaType = AutoLocal<'env, 'borrow>;
 
-    fn into_java(self, env: &'borrow JNIEnv<'env>) -> Self::JavaType {
+    fn into_java(self, env: &'borrow JnixEnv<'env>) -> Self::JavaType {
         let size = self.len();
         let array = env
             .new_byte_array(size as jsize)
@@ -89,7 +88,7 @@ macro_rules! impl_into_java_for_array {
 
                 type JavaType = AutoLocal<'env, 'borrow>;
 
-                fn into_java(self, env: &'borrow JNIEnv<'env>) -> Self::JavaType {
+                fn into_java(self, env: &'borrow JnixEnv<'env>) -> Self::JavaType {
                     (&self as &[$element_type]).into_java(env)
                 }
             }
@@ -108,7 +107,7 @@ where
 
     type JavaType = AutoLocal<'env, 'borrow>;
 
-    fn into_java(self, env: &'borrow JNIEnv<'env>) -> Self::JavaType {
+    fn into_java(self, env: &'borrow JnixEnv<'env>) -> Self::JavaType {
         match self {
             Some(t) => t.into_java(env),
             None => env.auto_local(JObject::null()),
@@ -125,7 +124,7 @@ where
 
     type JavaType = AutoLocal<'env, 'borrow>;
 
-    fn into_java(self, env: &'borrow JNIEnv<'env>) -> Self::JavaType {
+    fn into_java(self, env: &'borrow JnixEnv<'env>) -> Self::JavaType {
         let initial_capacity = self.len();
         let parameters = [JValue::Int(initial_capacity as jint)];
 
@@ -150,7 +149,7 @@ impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for String {
 
     type JavaType = AutoLocal<'env, 'borrow>;
 
-    fn into_java(self, env: &'borrow JNIEnv<'env>) -> Self::JavaType {
+    fn into_java(self, env: &'borrow JnixEnv<'env>) -> Self::JavaType {
         let jstring = env.new_string(&self).expect("Failed to create Java String");
 
         env.auto_local(jstring.into())
@@ -159,7 +158,7 @@ impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for String {
 
 fn ipvx_addr_into_java<'borrow, 'env: 'borrow>(
     original_octets: &[u8],
-    env: &'borrow JNIEnv<'env>,
+    env: &'borrow JnixEnv<'env>,
 ) -> AutoLocal<'env, 'borrow> {
     let constructor = env
         .get_static_method_id(
@@ -207,7 +206,7 @@ impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for Ipv4Addr {
 
     type JavaType = AutoLocal<'env, 'borrow>;
 
-    fn into_java(self, env: &'borrow JNIEnv<'env>) -> Self::JavaType {
+    fn into_java(self, env: &'borrow JnixEnv<'env>) -> Self::JavaType {
         ipvx_addr_into_java(self.octets().as_ref(), env)
     }
 }
@@ -217,7 +216,7 @@ impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for Ipv6Addr {
 
     type JavaType = AutoLocal<'env, 'borrow>;
 
-    fn into_java(self, env: &'borrow JNIEnv<'env>) -> Self::JavaType {
+    fn into_java(self, env: &'borrow JnixEnv<'env>) -> Self::JavaType {
         ipvx_addr_into_java(self.octets().as_ref(), env)
     }
 }
@@ -227,7 +226,7 @@ impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for IpAddr {
 
     type JavaType = AutoLocal<'env, 'borrow>;
 
-    fn into_java(self, env: &'borrow JNIEnv<'env>) -> Self::JavaType {
+    fn into_java(self, env: &'borrow JnixEnv<'env>) -> Self::JavaType {
         match self {
             IpAddr::V4(address) => address.into_java(env),
             IpAddr::V6(address) => address.into_java(env),
@@ -240,7 +239,7 @@ impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for SocketAddr {
 
     type JavaType = AutoLocal<'env, 'borrow>;
 
-    fn into_java(self, env: &'borrow JNIEnv<'env>) -> Self::JavaType {
+    fn into_java(self, env: &'borrow JnixEnv<'env>) -> Self::JavaType {
         let ip_address = self.ip().into_java(env);
         let port = self.port() as jint;
         let parameters = [JValue::Object(ip_address.as_obj()), JValue::Int(port)];
