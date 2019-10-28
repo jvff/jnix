@@ -240,8 +240,9 @@ fn generate_enum_class_bodies(
             let variant_name_literal = LitStr::new(&variant_name, Span::call_site());
 
             quote! {
+                let class = env.get_class(#jni_class_name_literal);
                 let variant_field_id = env.get_static_field_id(
-                    #jni_class_name_literal,
+                    &class,
                     #variant_name_literal,
                     concat!("L", #jni_class_name_literal, ";"),
                 ).expect(concat!("Failed to convert ",
@@ -252,7 +253,7 @@ fn generate_enum_class_bodies(
                 ));
 
                 let variant = env.get_static_field_unchecked(
-                    #jni_class_name_literal,
+                    &class,
                     variant_field_id,
                     jnix::jni::signature::JavaType::Object(#jni_class_name_literal.to_owned()),
                 ).expect(concat!("Failed to convert ",
