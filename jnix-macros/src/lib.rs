@@ -241,21 +241,10 @@ fn generate_enum_class_bodies(
 
             quote! {
                 let class = env.get_class(#jni_class_name_literal);
-                let variant_field_id = env.get_static_field_id(
+                let variant = env.get_static_field(
                     &class,
                     #variant_name_literal,
                     concat!("L", #jni_class_name_literal, ";"),
-                ).expect(concat!("Failed to convert ",
-                    #type_name_literal, "::", #variant_name_literal,
-                    " Rust enum variant into ",
-                    #class_name,
-                    " Java object",
-                ));
-
-                let variant = env.get_static_field_unchecked(
-                    &class,
-                    variant_field_id,
-                    jnix::jni::signature::JavaType::Object(#jni_class_name_literal.to_owned()),
                 ).expect(concat!("Failed to convert ",
                     #type_name_literal, "::", #variant_name_literal,
                     " Rust enum variant into ",
