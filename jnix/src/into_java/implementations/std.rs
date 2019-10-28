@@ -245,7 +245,7 @@ impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for SocketAddr {
         let port = self.port() as jint;
         let parameters = [JValue::Object(ip_address.as_obj()), JValue::Int(port)];
 
-        let class = env.get_class("java/net/InetAddress");
+        let class = env.get_class("java/net/InetSocketAddress");
         let object = env
             .new_object(&class, "(Ljava/net/InetAddress;I)V", &parameters)
             .expect("Failed to convert SocketAddr Rust type into InetSocketAddress Java object");
