@@ -236,7 +236,7 @@ impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for IpAddr {
 }
 
 impl<'borrow, 'env: 'borrow> IntoJava<'borrow, 'env> for SocketAddr {
-    const JNI_SIGNATURE: &'static str = "Ljava/net/InetSocketAddress";
+    const JNI_SIGNATURE: &'static str = "Ljava/net/InetSocketAddress;";
 
     type JavaType = AutoLocal<'env, 'borrow>;
 
